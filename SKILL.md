@@ -16,7 +16,7 @@ metadata:
 ## When to Use
 
 - 用户想生成游戏/虚拟主播/对话 UI 用的角色素材
-- 需要白底全身角色图 + 4 个标准状态循环视频
+- 需要绿幕全身角色图 + 4 个标准状态循环视频
 - 用户说"帮我生成一个角色"、"做个角色素材"、"character sprite"
 
 ## Dependencies
@@ -94,7 +94,7 @@ pixverse auth status --json         # 确认已登录；未登录提示运行 pi
 │     └── 询问："直接使用，还是以它为参考生成新图？"
 │           ├── 作为参考 → 入口 B
 │           └── 直接使用
-│                 └── 软提示："最佳格式为全身正面图/白底/9:16，符合吗？"
+│                 └── 软提示："最佳格式为全身正面图/绿幕/9:16，符合吗？"
 │                       ├── 符合 → 跳过图像阶段，进入【角色命名】
 │                       └── 不符合 → 执行 I2I 转换格式 → 满意度循环
 │
@@ -122,7 +122,7 @@ pixverse auth status --json         # 确认已登录；未登录提示运行 pi
 **T2I（入口 C）**：
 ```bash
 pixverse create image \
-  --prompt "全身正面图，白色背景，[角色描述]" \
+  --prompt "全身正面图，绿幕背景，[角色描述]" \
   --model gemini-3.1-flash \
   --quality 1080p \
   --aspect-ratio 9:16 \
@@ -133,7 +133,7 @@ pixverse create image \
 **I2I（入口 A 不符合 / 入口 B）**：
 ```bash
 pixverse create image \
-  --prompt "全身正面图，白色背景，[角色描述]" \
+  --prompt "全身正面图，绿幕背景，[角色描述]" \
   --image [参考图路径] \
   --model gemini-3.1-flash \
   --quality 1080p \
@@ -288,8 +288,8 @@ pixverse asset download [新video_id] --dest "output/[角色名]/videos" --json
 ```
 
 **处理说明**：
-- 抠白底：`colorkey` 对白色背景进行去除
-- Despill：`colorchannelmixer` 修正边缘白色溢色
+- 抠绿幕：`colorkey` 对绿色背景进行去除
+- Despill：`colorchannelmixer` 修正边缘绿色溢色
 - 输出位置：原文件夹内，文件名加 `_alpha` 后缀
 - 图片输出 PNG（rgba），视频输出 WebM VP9（yuva420p）
 
@@ -299,8 +299,8 @@ for IMG in output/[角色名]/image/*.{png,jpg,jpeg}; do
   [ -f "$IMG" ] || continue
   FILENAME=$(basename "${IMG%.*}")
   ffmpeg -i "$IMG" \
-    -vf "colorkey=color=0xFFFFFF:similarity=0.30:blend=0.08,\
-         colorchannelmixer=ra=-0.15:ga=-0.15:ba=-0.15" \
+    -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
+         colorchannelmixer=rg=-0.15:bg=-0.15" \
     -pix_fmt rgba \
     "output/[角色名]/image/${FILENAME}_alpha.png"
 done
@@ -310,8 +310,8 @@ for VID in output/[角色名]/videos/*.mp4; do
   [ -f "$VID" ] || continue
   FILENAME=$(basename "${VID%.*}")
   ffmpeg -i "$VID" \
-    -vf "colorkey=color=0xFFFFFF:similarity=0.30:blend=0.08,\
-         colorchannelmixer=ra=-0.15:ga=-0.15:ba=-0.15" \
+    -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
+         colorchannelmixer=rg=-0.15:bg=-0.15" \
     -c:v libvpx-vp9 \
     -pix_fmt yuva420p \
     "output/[角色名]/videos/${FILENAME}_alpha.webm"
