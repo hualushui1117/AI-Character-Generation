@@ -38,7 +38,7 @@ pixverse auth login       # OAuth 登录
 ## Critical Rules
 
 1. **每次 PixVerse 调用必须加 `--json`** — 机器可读输出
-2. **图像固定规格**：全身正面图、绿幕背景、9:16
+2. **图像固定规格**：全身正面图、纯绿色（#00FF00）绿幕背景、9:16
 3. **视频使用 Transition 模式**：首帧尾帧都传同一张参考图，通过提示词驱动动作
 4. **视频并行提交**：4 个状态用 `--no-wait` 同时提交，统一等待
 5. **全程维护内部状态**，跨对话轮次追踪角色名、路径、重生计数
@@ -53,6 +53,7 @@ pixverse auth login       # OAuth 登录
 ```
 角色名:          [用户命名后填入]
 参考图本地路径:  [下载后填入]
+绿幕背景:        true（默认）/ false（用户选择生成背景时）
 图像重生次数:    0（上限 3）
 视频重生次数:    { idle: 0, talk: 0, think: 0, listen: 0 }（每项上限 1）
 ```
@@ -117,12 +118,25 @@ pixverse auth status --json         # 确认已登录；未登录提示运行 pi
 | 服装装扮 | 黑色皮质战斗服、奇幻皮甲 |
 | 气质表情 | 冷酷、活泼、神秘 |
 
+### Background Confirmation
+
+引导追问完成后，生成前询问：
+
+```
+"需要为角色生成背景吗？（不需要的话默认绿幕背景，方便后期一键去除）"
+
+├── 是 → 移除固定 prompt 中的"纯绿色（#00FF00）绿幕背景"
+│         软提示："带背景的图片将无法使用最后的透明背景处理"
+│         可追问用户描述背景（可选）→ 进入图像生成
+└── 否 → 保留固定 prompt 中的"纯绿色（#00FF00）绿幕背景" → 进入图像生成
+```
+
 ### Image CLI Commands
 
 **T2I（入口 C）**：
 ```bash
 pixverse create image \
-  --prompt "全身正面图，绿幕背景，[角色描述]" \
+  --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述]" \
   --model gemini-3.1-flash \
   --quality 1080p \
   --aspect-ratio 9:16 \
@@ -133,7 +147,7 @@ pixverse create image \
 **I2I（入口 A 不符合 / 入口 B）**：
 ```bash
 pixverse create image \
-  --prompt "全身正面图，绿幕背景，[角色描述]" \
+  --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述]" \
   --image [参考图路径] \
   --model gemini-3.1-flash \
   --quality 1080p \
@@ -142,7 +156,7 @@ pixverse create image \
   --json
 ```
 
-**等待并下载**：
+**等待并获取预览 URL**：
 ```bash
 # 获取 image_id（count=2 时返回数组）
 IMAGE_IDS=$(echo "$RESULT" | jq -r '.image_ids[]')
@@ -152,28 +166,36 @@ for ID in $IMAGE_IDS; do
   pixverse task wait $ID --type image --json
 done
 
-# 获取 image_url 展示给用户选择
+# 获取 image_url 展示给用户选择（仅展示 URL，不下载）
 for ID in $IMAGE_IDS; do
   pixverse asset info $ID --type image --json
 done
-
-# 用户选定后下载
-mkdir -p output/[角色名]/image
-pixverse asset download [选中的image_id] --type image \
-  --dest output/[角色名]/image --json
 ```
+
+> 中间各轮重生只通过 URL 预览，**不落盘**。最终选定后统一下载一次（见 Satisfaction Loop）。
 
 ### Satisfaction Loop
 
 展示 2 张图（image_url），最多重生 3 次：
 
 ```
-├── 选中一张 → 进入【角色命名】
-├── 局部不满意（有反馈）→ 定向修改维度 → 重新生成（重生次数 +1）
-├── 整体不满意 → 重新追问 → 重新生成（重生次数 +1）
+├── 选中一张（最终定稿）
+│     └── 清空并下载到固定路径：
+│           rm -f output/[角色名]/image/*
+│           mkdir -p output/[角色名]/image
+│           pixverse asset download [选中的image_id] --type image \
+│             --dest output/[角色名]/image --json
+│           mv output/[角色名]/image/[原始文件名] output/[角色名]/image/character.png
+│           → 进入【角色命名】
+├── 局部不满意（有反馈）
+│     └── 主动询问："还有什么想修改或增加的关键词吗？"
+│           └── 整合用户反馈 → 定向修改对应维度 → 重新生成（重生次数 +1）
+├── 整体不满意
+│     └── 主动询问："有什么想修改或增加的关键词吗？"
+│           └── 整合用户反馈 → 重新追问缺失维度 → 重新生成（重生次数 +1）
 └── 达到 3 次上限 → 提示重新描述或上传参考图
       ├── 是 → 重置重生次数，回到入口 B/C
-      └── 否 → 从现有图中强制选一张继续
+      └── 否 → 从现有图中强制选一张继续（同样执行上方的清空并下载步骤）
 ```
 
 ### Character Naming
@@ -208,22 +230,22 @@ CHAR_IMG="output/[角色名]/image/[文件名]"
 IDLE_ID=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "角色静止站立，放松姿态，自然表情，镜头固定，保持竖屏构图" \
-  --quality 720p --duration 3 --no-wait --json | jq -r '.video_id')
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
 TALK_ID=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "角色正在说话，嘴部做出说话动作，热情表达，镜头固定，保持竖屏构图" \
-  --quality 720p --duration 3 --no-wait --json | jq -r '.video_id')
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
 THINK_ID=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "角色做出思考的手势，若有所思，手指轻点下巴，镜头固定，保持竖屏构图" \
-  --quality 720p --duration 3 --no-wait --json | jq -r '.video_id')
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
 LISTEN_ID=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "角色侧耳倾听，认真聆听的表情，温和友善，镜头固定，保持竖屏构图" \
-  --quality 720p --duration 3 --no-wait --json | jq -r '.video_id')
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
 # 2. 统一等待
 for ID in $IDLE_ID $TALK_ID $THINK_ID $LISTEN_ID; do
@@ -266,7 +288,7 @@ pixverse asset download $LISTEN_ID --dest "output/[角色名]/videos" --json
 pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "[根据用户反馈调整后的提示词]" \
-  --quality 720p --duration 3 \
+  --quality 1080p --duration 3 \
   --json
 
 pixverse asset download [新video_id] --dest "output/[角色名]/videos" --json
@@ -276,11 +298,13 @@ pixverse asset download [新video_id] --dest "output/[角色名]/videos" --json
 
 ## Post-Processing: Transparent Background
 
-所有视频验收完毕后询问：
+所有视频验收完毕后，**仅当图像阶段使用了纯绿色（#00FF00）绿幕背景时**询问：
 
 ```
 是否需要将图片和视频处理成透明背景版本？（适合叠加到不同场景使用）
 ```
+
+若图像阶段选择了生成背景，跳过此询问，直接进入 Wrap-up。
 
 ```
 ├── 否 → 跳过，进入【Wrap-up】

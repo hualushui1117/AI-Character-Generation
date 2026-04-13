@@ -9,7 +9,7 @@
 ## 视频规格
 
 ### 基础规范
-- **分辨率**：720p
+- **分辨率**：1080p（优先），720p（备选，1080p 不可用时降级）
 - **尺寸比例**：9:16（竖屏）
 - **时长**：3 秒 / 条
 - **镜头**：固定不变
@@ -96,11 +96,11 @@ pixverse create transition \
                   ↓
          [视频生成阶段自动执行]
                   │
-         ┌────────┼────────┬────────┬────────┐
-         ↓        ↓        ↓        ↓        ↓
-       Idle    Talk    Think   Listen   [其他]
-         │        │        │        │        │
-         └────────┼────────┴────────┴────────┘
+         ┌────────┼────────┬────────┐
+         ↓        ↓        ↓        ↓
+       Idle    Talk    Think   Listen
+         │        │        │        │
+         └────────┼────────┴────────┘
                   ↓
          [生成完毕，展示 4 个视频]
                   │
@@ -206,6 +206,68 @@ output/
            ├── talk.mp4
            ├── think.mp4
            └── listen.mp4
+```
+
+---
+
+## 透明背景处理（可选后处理）
+
+所有视频验收完毕后，**仅当图像阶段使用了纯绿色（#00FF00）绿幕背景时**，系统询问：
+
+> "是否需要将图片和视频处理成透明背景版本？（适合叠加到不同场景使用）"
+
+若图像阶段选择了生成背景，跳过此询问，直接结束。
+
+### 处理说明
+
+- **抠绿幕**：`colorkey` 滤镜去除 `#00FF00` 背景
+- **Despill**：`colorchannelmixer` 修正边缘绿色溢色
+- **输出位置**：原文件夹内，文件名加 `_alpha` 后缀
+- **图片输出**：PNG（RGBA）；**视频输出**：WebM VP9（yuva420p）
+
+### 处理命令
+
+```bash
+# 处理 image/ 下所有图片
+for IMG in output/[角色名]/image/*.{png,jpg,jpeg}; do
+  [ -f "$IMG" ] || continue
+  FILENAME=$(basename "${IMG%.*}")
+  ffmpeg -i "$IMG" \
+    -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
+         colorchannelmixer=rg=-0.15:bg=-0.15" \
+    -pix_fmt rgba \
+    "output/[角色名]/image/${FILENAME}_alpha.png"
+done
+
+# 处理 videos/ 下所有视频
+for VID in output/[角色名]/videos/*.mp4; do
+  [ -f "$VID" ] || continue
+  FILENAME=$(basename "${VID%.*}")
+  ffmpeg -i "$VID" \
+    -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
+         colorchannelmixer=rg=-0.15:bg=-0.15" \
+    -c:v libvpx-vp9 \
+    -pix_fmt yuva420p \
+    "output/[角色名]/videos/${FILENAME}_alpha.webm"
+done
+```
+
+### 处理后文件结构
+
+```
+output/[角色名]/
+├── image/
+│   ├── character.png           # 原始参考图
+│   └── character_alpha.png     # 透明背景版
+└── videos/
+    ├── idle.mp4
+    ├── talk.mp4
+    ├── think.mp4
+    ├── listen.mp4
+    ├── idle_alpha.webm         # 透明背景版
+    ├── talk_alpha.webm
+    ├── think_alpha.webm
+    └── listen_alpha.webm
 ```
 
 ---
