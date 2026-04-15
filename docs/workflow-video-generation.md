@@ -82,7 +82,9 @@ pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "角色正在说话，嘴部做出说话动作，热情表达，镜头固定，竖屏" \
   --duration 3 \
-  --quality 1080p
+  --quality 1080p \
+  --no-wait \
+  --json
 ```
 
 ---
@@ -162,6 +164,8 @@ pixverse create transition \
 ## 文件存放规范
 
 生成的视频文件按以下结构存放，**文件夹名使用用户输入的角色名**：
+
+> 注意：`pixverse asset download` 保存的文件名由 API 决定（通常为随机 ID）。下载后应手动重命名为下方规范名称，或在脚本中用 `mv` 完成重命名。
 
 ```
 output/
