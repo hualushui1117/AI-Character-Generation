@@ -58,6 +58,10 @@ pixverse auth login       # OAuth 登录
 视频重生次数:    { idle: 0, talk: 0, think: 0, listen: 0 }（每项上限 1）
 ```
 
+以下两个 bash 变量在执行命令时使用（随流程推进赋值）：
+- `CHAR_NAME` — 角色命名完成后赋值，用于路径构建和 state.json 写入
+- `GREEN_SCREEN` — 背景确认后赋值为 `true` 或 `false`，用于 state.json 写入
+
 ---
 
 ## Phase 0: Install PixVerse Skill
@@ -83,6 +87,39 @@ pixverse auth status --json         # 确认已登录；未登录提示运行 pi
 ```
 
 当前目录需有 `docs/` 或 `.claude/`，否则告知用户切换到项目根目录。
+
+---
+
+## Breakpoint Recovery
+
+Pre-flight 通过后，**优先执行**：
+
+```bash
+if [ -f .pixverse_state.json ]; then
+  python3 -c "
+import json
+s = json.load(open('.pixverse_state.json'))
+name = s.get('character_name', '未知')
+desc = {
+  'image_done':        '图像已生成，视频待开始',
+  'videos_submitted':  '视频已提交（ID 保留），待下载',
+  'videos_done':       '视频已下载，待用户验收'
+}
+print(f'发现未完成任务：角色「{name}」— {desc.get(s[\"phase\"], s[\"phase\"])}')
+"
+fi
+```
+
+若发现 `.pixverse_state.json`，询问用户：「继续上次进度，还是重新开始？」
+
+```
+├── 继续 → 读取 state，根据 phase 跳转：
+│     image_done       → 从 CHAR_NAME/GREEN_SCREEN 恢复，直接进入 Phase 2
+│     videos_submitted → 从 IDLE_ID/TALK_ID/THINK_ID/LISTEN_ID 恢复，直接进入等待命令
+│     videos_done      → 直接进入 Display Results，重新展示 4 个视频供用户验收
+│
+└── 重新开始 → rm .pixverse_state.json，走完整流程
+```
 
 ---
 
@@ -129,6 +166,12 @@ pixverse auth status --json         # 确认已登录；未登录提示运行 pi
 │         软提示："带背景的图片将无法使用最后的透明背景处理"
 │         可追问用户描述背景（可选）→ 进入图像生成
 └── 否 → 保留固定 prompt 中的"纯绿色（#00FF00）绿幕背景" → 进入图像生成
+```
+
+```bash
+GREEN_SCREEN=true   # 用户选择绿幕背景（否，默认）
+# 或
+GREEN_SCREEN=false  # 用户选择生成背景（是）
 ```
 
 ### Image CLI Commands
@@ -189,6 +232,12 @@ done
 │                 pixverse asset download [选中的image_id] --type image \
 │                   --dest output/[角色名]/image --json
 │                 mv output/[角色名]/image/[原始文件名] output/[角色名]/image/character.png
+│           → 写入断点状态：
+│                 cat > .pixverse_state.json << EOF
+│                 { "phase": "image_done", "character_name": "$CHAR_NAME",
+│                   "green_screen": $GREEN_SCREEN,
+│                   "image_path": "output/$CHAR_NAME/image/character.png" }
+│                 EOF
 │           → 进入 Phase 2（视频生成）
 ├── 局部不满意（有反馈）
 │     └── 主动询问："还有什么想修改或增加的关键词吗？"
@@ -207,6 +256,10 @@ done
 Claude: "请为这个角色取个名字～"
 用户输入（2-20 字符，如：冰川战士、月光精灵）
 → 记入内部状态，进入 Phase 2
+```
+
+```bash
+CHAR_NAME="[用户输入的角色名]"
 ```
 
 ---
@@ -250,6 +303,22 @@ LISTEN_ID=$(pixverse create transition \
   --prompt "角色侧耳倾听，认真聆听的表情，温和友善，镜头固定，保持竖屏构图" \
   --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
+# 写入断点状态（4 个 ID 均已拿到，万一后续中断可直接恢复等待）
+cat > .pixverse_state.json << EOF
+{
+  "phase": "videos_submitted",
+  "character_name": "$CHAR_NAME",
+  "green_screen": $GREEN_SCREEN,
+  "image_path": "output/$CHAR_NAME/image/character.png",
+  "video_ids": {
+    "idle":   "$IDLE_ID",
+    "talk":   "$TALK_ID",
+    "think":  "$THINK_ID",
+    "listen": "$LISTEN_ID"
+  }
+}
+EOF
+
 # 2. 统一等待
 for ID in $IDLE_ID $TALK_ID $THINK_ID $LISTEN_ID; do
   pixverse task wait $ID --json
@@ -261,6 +330,22 @@ pixverse asset download $IDLE_ID   --dest "output/[角色名]/videos" --json
 pixverse asset download $TALK_ID   --dest "output/[角色名]/videos" --json
 pixverse asset download $THINK_ID  --dest "output/[角色名]/videos" --json
 pixverse asset download $LISTEN_ID --dest "output/[角色名]/videos" --json
+
+# 写入断点状态（视频全部下载完成）
+cat > .pixverse_state.json << EOF
+{
+  "phase": "videos_done",
+  "character_name": "$CHAR_NAME",
+  "green_screen": $GREEN_SCREEN,
+  "image_path": "output/$CHAR_NAME/image/character.png",
+  "video_ids": {
+    "idle":   "$IDLE_ID",
+    "talk":   "$TALK_ID",
+    "think":  "$THINK_ID",
+    "listen": "$LISTEN_ID"
+  }
+}
+EOF
 ```
 
 ### Display Results
@@ -383,7 +468,11 @@ output/
 
 ## Wrap-up
 
-全部完成后询问：
+全部完成后，清理断点文件并告知用户：
+
+```bash
+rm -f .pixverse_state.json
+```
 
 ```
 这个角色的素材已全部完成 🎉
