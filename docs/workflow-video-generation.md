@@ -79,11 +79,10 @@
 
 ```bash
 pixverse create transition \
-  --first-frame reference.png \
-  --last-frame reference.png \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "角色正在说话，嘴部做出说话动作，热情表达，镜头固定，竖屏" \
   --duration 3 \
-  --quality 720p
+  --quality 1080p
 ```
 
 ---
@@ -156,6 +155,7 @@ pixverse create transition \
                 └── 展示更新后的视频
                      ├── 满意 ──────────→ 完成 / 导出
                      └── 不满意 ────────→ 无法继续重生，提示已达上限
+```
 
 ---
 
