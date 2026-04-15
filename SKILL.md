@@ -135,25 +135,27 @@ pixverse auth status --json         # 确认已登录；未登录提示运行 pi
 
 **T2I（入口 C）**：
 ```bash
-pixverse create image \
+RESULT=$(pixverse create image \
   --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述]" \
   --model gemini-3.1-flash \
   --quality 1080p \
   --aspect-ratio 9:16 \
   --count 2 \
-  --json
+  --no-wait \
+  --json)
 ```
 
 **I2I（入口 A 不符合 / 入口 B）**：
 ```bash
-pixverse create image \
+RESULT=$(pixverse create image \
   --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述]" \
   --image [参考图路径] \
   --model gemini-3.1-flash \
   --quality 1080p \
   --aspect-ratio 9:16 \
   --count 2 \
-  --json
+  --no-wait \
+  --json)
 ```
 
 **等待并获取预览 URL**：
@@ -161,7 +163,7 @@ pixverse create image \
 # 获取 image_id（count=2 时返回数组）
 IMAGE_IDS=$(echo "$RESULT" | jq -r '.image_ids[]')
 
-# 等待完成（如使用了 --no-wait）
+# 等待完成
 for ID in $IMAGE_IDS; do
   pixverse task wait $ID --type image --json
 done
@@ -180,13 +182,14 @@ done
 
 ```
 ├── 选中一张（最终定稿）
-│     └── 清空并下载到固定路径：
-│           rm -f output/[角色名]/image/*
-│           mkdir -p output/[角色名]/image
-│           pixverse asset download [选中的image_id] --type image \
-│             --dest output/[角色名]/image --json
-│           mv output/[角色名]/image/[原始文件名] output/[角色名]/image/character.png
-│           → 进入【角色命名】
+│     └── → 进入【角色命名】（先命名，路径才有角色名）
+│           → 命名完成后清空并下载：
+│                 rm -f output/[角色名]/image/*
+│                 mkdir -p output/[角色名]/image
+│                 pixverse asset download [选中的image_id] --type image \
+│                   --dest output/[角色名]/image --json
+│                 mv output/[角色名]/image/[原始文件名] output/[角色名]/image/character.png
+│           → 进入 Phase 2（视频生成）
 ├── 局部不满意（有反馈）
 │     └── 主动询问："还有什么想修改或增加的关键词吗？"
 │           └── 整合用户反馈 → 定向修改对应维度 → 重新生成（重生次数 +1）
@@ -224,7 +227,7 @@ Claude: "请为这个角色取个名字～"
 ### Video CLI Commands
 
 ```bash
-CHAR_IMG="output/[角色名]/image/[文件名]"
+CHAR_IMG="output/[角色名]/image/character.png"
 
 # 1. 并行提交 4 个任务
 IDLE_ID=$(pixverse create transition \
@@ -285,13 +288,14 @@ pixverse asset download $LISTEN_ID --dest "output/[角色名]/videos" --json
 
 重生命令（不加 `--no-wait`）：
 ```bash
-pixverse create transition \
+NEW_RESULT=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "[根据用户反馈调整后的提示词]" \
   --quality 1080p --duration 3 \
-  --json
+  --json)
+NEW_VIDEO_ID=$(echo "$NEW_RESULT" | jq -r '.video_id')
 
-pixverse asset download [新video_id] --dest "output/[角色名]/videos" --json
+pixverse asset download $NEW_VIDEO_ID --dest "output/[角色名]/videos" --json
 ```
 
 ---
