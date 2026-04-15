@@ -15,8 +15,8 @@
 - **镜头**：固定不变
 
 ### 生成数量
-- **每张参考图**生成 4 个状态的视频
-- **总产出**：参考图张数 × 4
+- **每张参考图**生成 4 个状态 × 每状态 3 个视频
+- **总产出**：参考图张数 × 12
 
 ---
 
@@ -44,29 +44,22 @@
 ```
 参考图（确认图）
  │
- ├── 状态 1：Idle（待机）
- │    ├── 首帧：参考图
- │    ├── 尾帧：参考图（相同）
- │    ├── 提示词：角色静止站立，放松姿态，自然表情，镜头固定，竖屏
- │    └── 输出：idle.mp4（3s）
+ ├── 状态 1：Idle（待机）— 3 条提示词变体，生成 3 个视频
+ │    ├── 首帧/尾帧：参考图（相同）
+ │    ├── 提示词变体1→idle1.mp4 / 变体2→idle2.mp4 / 变体3→idle3.mp4
+ │    └── 固定前缀：固定镜头，保持人物形象一致性，背景不变，保持竖屏构图：
  │
- ├── 状态 2：Talk（说话）
- │    ├── 首帧：参考图
- │    ├── 尾帧：参考图（相同）
- │    ├── 提示词：角色正在说话，嘴部做出说话动作，热情表达，镜头固定，竖屏
- │    └── 输出：talk.mp4（3s）
+ ├── 状态 2：Talk（说话）— 3 条提示词变体，生成 3 个视频
+ │    ├── 首帧/尾帧：参考图（相同）
+ │    └── talk1.mp4 / talk2.mp4 / talk3.mp4
  │
- ├── 状态 3：Think（思考）
- │    ├── 首帧：参考图
- │    ├── 尾帧：参考图（相同）
- │    ├── 提示词：角色做出思考的手势，若有所思，手指轻点下巴，镜头固定，竖屏
- │    └── 输出：think.mp4（3s）
+ ├── 状态 3：Think（思考）— 3 条提示词变体，生成 3 个视频
+ │    ├── 首帧/尾帧：参考图（相同）
+ │    └── think1.mp4 / think2.mp4 / think3.mp4
  │
- └── 状态 4：Listen（聆听）
-      ├── 首帧：参考图
-      ├── 尾帧：参考图（相同）
-      ├── 提示词：角色侧耳倾听，认真聆听的表情，温和友善，镜头固定，竖屏
-      └── 输出：listen.mp4（3s）
+ └── 状态 4：Listen（聆听）— 3 条提示词变体，生成 3 个视频
+      ├── 首帧/尾帧：参考图（相同）
+      └── listen1.mp4 / listen2.mp4 / listen3.mp4
 ```
 
 ### Transition 模式工作原理
@@ -80,7 +73,7 @@
 ```bash
 pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
-  --prompt "角色正在说话，嘴部做出说话动作，热情表达，镜头固定，竖屏" \
+  --prompt "固定镜头，保持人物形象一致性，背景不变，保持竖屏构图：人物面向镜头生动说话，口型清晰贴合发音，伴随富有情绪的手势动作，神态鲜活有感染力" \
   --duration 3 \
   --quality 1080p \
   --no-wait \
@@ -100,19 +93,17 @@ pixverse create transition \
          ┌────────┼────────┬────────┐
          ↓        ↓        ↓        ↓
        Idle    Talk    Think   Listen
+      (×3)    (×3)    (×3)    (×3)
          │        │        │        │
          └────────┼────────┴────────┘
                   ↓
-         [生成完毕，展示 4 个视频]
+         [生成完毕，展示 12 个视频]
                   │
                   ├─→ 用户满意 ────────→ 完成 / 导出
                   │
                   └─→ 用户不满意
                        │
-                       ├─ 选择重生 Idle（已用×1）
-                       ├─ 选择重生 Talk（已用×1）
-                       ├─ 选择重生 Think（已用×1）
-                       └─ 选择重生 Listen（已用×1）
+                       └─ 指定某个视频重生（E.g. idle2）（每个视频最多×1）
                             │
                             ↓
                        [单个视频重生]
@@ -135,23 +126,23 @@ pixverse create transition \
 ### 视频展示与选择
 
 - **视频生成过程**：系统自动执行，**不向用户做任何选择**
-- **结果展示**：生成完毕后，展示 4 个视频供用户查看（一套完整的 Idle、Talk、Think、Listen）
+- **结果展示**：生成完毕后，展示 12 个视频供用户查看（每个状态 3 个：idle1~3、talk1~3、think1~3、listen1~3）
 
 ### 满意度循环 — 单视频重生机制
 
-用户可对每个状态进行 **一次性重生**：
+用户可对每个视频进行 **一次性重生**：
 
 ```
-展示 4 个视频
+展示 12 个视频
  │
  ├── 用户满意 ──────────────────→ 完成 / 导出
  │
  └── 用户不满意（有具体反馈）
-      └── 对单个状态重生（E.g., 只重生 Talk）
+      └── 对单个视频重生（E.g., 只重生 idle2）
            │
            ├── [重生次数限制]
-           │  每个状态最多重生1次
-           │  （Idle ×1、Talk ×1、Think ×1、Listen ×1）
+           │  每个视频最多重生1次
+           │  （idle1 ×1、idle2 ×1、idle3 ×1 … listen3 ×1）
            │
            └── 重生完成
                 └── 展示更新后的视频
@@ -174,10 +165,10 @@ output/
       │   └── character.png            # 参考图
       │
       └── videos/
-           ├── idle.mp4
-           ├── talk.mp4
-           ├── think.mp4
-           └── listen.mp4
+           ├── idle1.mp4 / idle2.mp4 / idle3.mp4
+           ├── talk1.mp4 / talk2.mp4 / talk3.mp4
+           ├── think1.mp4 / think2.mp4 / think3.mp4
+           └── listen1.mp4 / listen2.mp4 / listen3.mp4
 ```
 
 ### 命名示例
@@ -188,28 +179,19 @@ output/
  │    ├── image/
  │    │   └── character.png
  │    └── videos/
- │         ├── idle.mp4
- │         ├── talk.mp4
- │         ├── think.mp4
- │         └── listen.mp4
+ │         ├── idle1.mp4 / idle2.mp4 / idle3.mp4
+ │         ├── talk1.mp4 / talk2.mp4 / talk3.mp4
+ │         ├── think1.mp4 / think2.mp4 / think3.mp4
+ │         └── listen1.mp4 / listen2.mp4 / listen3.mp4
  │
- ├── 月光精灵/
- │    ├── image/
- │    │   └── character.png
- │    └── videos/
- │         ├── idle.mp4
- │         ├── talk.mp4
- │         ├── think.mp4
- │         └── listen.mp4
- │
- └── 暗夜探手/
+ └── 月光精灵/
       ├── image/
       │   └── character.png
       └── videos/
-           ├── idle.mp4
-           ├── talk.mp4
-           ├── think.mp4
-           └── listen.mp4
+           ├── idle1.mp4 / idle2.mp4 / idle3.mp4
+           ├── talk1.mp4 / talk2.mp4 / talk3.mp4
+           ├── think1.mp4 / think2.mp4 / think3.mp4
+           └── listen1.mp4 / listen2.mp4 / listen3.mp4
 ```
 
 ---
@@ -226,33 +208,32 @@ output/
 
 - **抠绿幕**：`colorkey` 滤镜去除 `#00FF00` 背景
 - **Despill**：`colorchannelmixer` 修正边缘绿色溢色
-- **输出位置**：原文件夹内，文件名加 `_alpha` 后缀
+- **输出位置**：新建 `[image无背景版]/` 和 `[videos无背景版]/` 文件夹
 - **图片输出**：PNG（RGBA）；**视频输出**：WebM VP9（yuva420p）
 
 ### 处理命令
 
 ```bash
-# 处理 image/ 下所有图片
-for IMG in output/[角色名]/image/*.{png,jpg,jpeg}; do
-  [ -f "$IMG" ] || continue
-  FILENAME=$(basename "${IMG%.*}")
-  ffmpeg -i "$IMG" \
-    -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
-         colorchannelmixer=rg=-0.15:bg=-0.15" \
-    -pix_fmt rgba \
-    "output/[角色名]/image/${FILENAME}_alpha.png"
-done
+mkdir -p "output/$CHAR_NAME/image无背景版"
+mkdir -p "output/$CHAR_NAME/videos无背景版"
 
-# 处理 videos/ 下所有视频
-for VID in output/[角色名]/videos/*.mp4; do
-  [ -f "$VID" ] || continue
-  FILENAME=$(basename "${VID%.*}")
-  ffmpeg -i "$VID" \
-    -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
-         colorchannelmixer=rg=-0.15:bg=-0.15" \
-    -c:v libvpx-vp9 \
-    -pix_fmt yuva420p \
-    "output/[角色名]/videos/${FILENAME}_alpha.webm"
+# 处理参考图
+ffmpeg -i "output/$CHAR_NAME/image/character.png" \
+  -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
+       colorchannelmixer=rg=-0.15:bg=-0.15" \
+  -pix_fmt rgba \
+  "output/$CHAR_NAME/image无背景版/character无背景版.png"
+
+# 处理 12 个视频
+for STATE in idle talk think listen; do
+  for N in 1 2 3; do
+    ffmpeg -i "output/$CHAR_NAME/videos/${STATE}${N}.mp4" \
+      -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
+           colorchannelmixer=rg=-0.15:bg=-0.15" \
+      -c:v libvpx-vp9 \
+      -pix_fmt yuva420p \
+      "output/$CHAR_NAME/videos无背景版/${STATE}无背景版${N}.webm"
+  done
 done
 ```
 
@@ -261,17 +242,19 @@ done
 ```
 output/[角色名]/
 ├── image/
-│   ├── character.png           # 原始参考图
-│   └── character_alpha.png     # 透明背景版
-└── videos/
-    ├── idle.mp4
-    ├── talk.mp4
-    ├── think.mp4
-    ├── listen.mp4
-    ├── idle_alpha.webm         # 透明背景版
-    ├── talk_alpha.webm
-    ├── think_alpha.webm
-    └── listen_alpha.webm
+│   └── character.png
+├── image无背景版/
+│   └── character无背景版.png
+├── videos/
+│   ├── idle1.mp4 / idle2.mp4 / idle3.mp4
+│   ├── talk1.mp4 / talk2.mp4 / talk3.mp4
+│   ├── think1.mp4 / think2.mp4 / think3.mp4
+│   └── listen1.mp4 / listen2.mp4 / listen3.mp4
+└── videos无背景版/
+    ├── idle无背景版1.webm / idle无背景版2.webm / idle无背景版3.webm
+    ├── talk无背景版1.webm / talk无背景版2.webm / talk无背景版3.webm
+    ├── think无背景版1.webm / think无背景版2.webm / think无背景版3.webm
+    └── listen无背景版1.webm / listen无背景版2.webm / listen无背景版3.webm
 ```
 
 ---

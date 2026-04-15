@@ -40,7 +40,7 @@ pixverse auth login       # OAuth 登录
 1. **每次 PixVerse 调用必须加 `--json`** — 机器可读输出
 2. **图像固定规格**：全身正面图、纯绿色（#00FF00）绿幕背景、9:16
 3. **视频使用 Transition 模式**：首帧尾帧都传同一张参考图，通过提示词驱动动作
-4. **视频并行提交**：4 个状态用 `--no-wait` 同时提交，统一等待
+4. **视频并行提交**：12 个任务用 `--no-wait` 同时提交，统一等待
 5. **全程维护内部状态**，跨对话轮次追踪角色名、路径、重生计数
 6. **不向用户展示最终 prompt**，直接执行生成
 
@@ -55,7 +55,7 @@ pixverse auth login       # OAuth 登录
 参考图本地路径:  [下载后填入]
 绿幕背景:        true（默认）/ false（用户选择生成背景时）
 图像重生次数:    0（上限 3）
-视频重生次数:    { idle: 0, talk: 0, think: 0, listen: 0 }（每项上限 1）
+视频重生次数:    { idle1: 0, idle2: 0, idle3: 0, talk1: 0, talk2: 0, talk3: 0, think1: 0, think2: 0, think3: 0, listen1: 0, listen2: 0, listen3: 0 }（每项上限 1）
 ```
 
 以下两个 bash 变量在执行命令时使用（随流程推进赋值）：
@@ -115,8 +115,8 @@ fi
 ```
 ├── 继续 → 读取 state，根据 phase 跳转：
 │     image_done       → 从 CHAR_NAME/GREEN_SCREEN 恢复，直接进入 Phase 2
-│     videos_submitted → 从 IDLE_ID/TALK_ID/THINK_ID/LISTEN_ID 恢复，直接进入等待命令
-│     videos_done      → 直接进入 Display Results，重新展示 4 个视频供用户验收
+│     videos_submitted → 从 state.json 中恢复 12 个 video_id，直接进入等待命令
+│     videos_done      → 直接进入 Display Results，重新展示 12 个视频供用户验收
 │
 └── 重新开始 → rm .pixverse_state.json，走完整流程
 ```
@@ -178,60 +178,84 @@ GREEN_SCREEN=false  # 用户选择生成背景（是）
 
 **T2I（入口 C）**：
 ```bash
-RESULT=$(pixverse create image \
-  --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述]" \
+# 分析用户完整描述，找出视觉上存在合理分歧的维度（如气质、风格解读），
+# 拟定两种不同诠释，分别生成各一张图
+RESULT1=$(pixverse create image \
+  --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述·诠释A]" \
   --model gemini-3.1-flash \
   --quality 1080p \
   --aspect-ratio 9:16 \
-  --count 2 \
+  --count 1 \
+  --no-wait \
+  --json)
+
+RESULT2=$(pixverse create image \
+  --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述·诠释B]" \
+  --model gemini-3.1-flash \
+  --quality 1080p \
+  --aspect-ratio 9:16 \
+  --count 1 \
   --no-wait \
   --json)
 ```
 
 **I2I（入口 A 不符合 / 入口 B）**：
 ```bash
-RESULT=$(pixverse create image \
-  --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述]" \
+RESULT1=$(pixverse create image \
+  --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述·诠释A]" \
   --image [参考图路径] \
   --model gemini-3.1-flash \
   --quality 1080p \
   --aspect-ratio 9:16 \
-  --count 2 \
+  --count 1 \
+  --no-wait \
+  --json)
+
+RESULT2=$(pixverse create image \
+  --prompt "全身正面图，[纯绿色（#00FF00）绿幕背景，]（根据 Background Confirmation 决定是否保留）[角色描述·诠释B]" \
+  --image [参考图路径] \
+  --model gemini-3.1-flash \
+  --quality 1080p \
+  --aspect-ratio 9:16 \
+  --count 1 \
   --no-wait \
   --json)
 ```
 
 **等待并获取预览 URL**：
 ```bash
-# 获取 image_id（count=2 时返回数组）
-IMAGE_IDS=$(echo "$RESULT" | jq -r '.image_ids[]')
+# 获取两张图各自的 image_id
+IMG1_ID=$(echo "$RESULT1" | jq -r '.image_ids[0]')
+IMG2_ID=$(echo "$RESULT2" | jq -r '.image_ids[0]')
 
 # 等待完成
-for ID in $IMAGE_IDS; do
-  pixverse task wait $ID --type image --json
-done
+pixverse task wait $IMG1_ID --type image --json
+pixverse task wait $IMG2_ID --type image --json
 
 # 获取 image_url 展示给用户选择（仅展示 URL，不下载）
-for ID in $IMAGE_IDS; do
-  pixverse asset info $ID --type image --json
-done
+pixverse asset info $IMG1_ID --type image --json
+pixverse asset info $IMG2_ID --type image --json
 ```
 
 > 中间各轮重生只通过 URL 预览，**不落盘**。最终选定后统一下载一次（见 Satisfaction Loop）。
 
 ### Satisfaction Loop
 
-展示 2 张图（image_url），最多重生 3 次：
+展示 2 张图（image_url），附上一行对比说明，最多重生 3 次：
+
+> 例：「图一偏冷酷内敛，图二偏强势凌厉——两种气质诠释，选你更想要的方向。」
+> 维度由 Claude 自行从用户描述中识别，选视觉上存在合理分歧的点。
 
 ```
 ├── 选中一张（最终定稿）
 │     └── → 进入【角色命名】（先命名，路径才有角色名）
 │           → 命名完成后清空并下载：
-│                 rm -f output/[角色名]/image/*
-│                 mkdir -p output/[角色名]/image
-│                 pixverse asset download [选中的image_id] --type image \
-│                   --dest output/[角色名]/image --json
-│                 mv output/[角色名]/image/[原始文件名] output/[角色名]/image/character.png
+│                 rm -f "output/$CHAR_NAME/image/"*
+│                 mkdir -p "output/$CHAR_NAME/image"
+│                 TMP_IMG=$(mktemp -d)
+│                 pixverse asset download "$CHOSEN_IMG_ID" --type image --dest "$TMP_IMG" --json
+│                 mv "$TMP_IMG"/*.* "output/$CHAR_NAME/image/character.png"
+│                 rm -rf "$TMP_IMG"
 │           → 写入断点状态：
 │                 cat > .pixverse_state.json << EOF
 │                 { "phase": "image_done", "character_name": "$CHAR_NAME",
@@ -270,40 +294,99 @@ CHAR_NAME="[用户输入的角色名]"
 
 ### 4 State Prompts
 
-| 状态 | 提示词 |
-|------|--------|
-| idle | 角色静止站立，放松姿态，自然表情，镜头固定，保持竖屏构图 |
-| talk | 角色正在说话，嘴部做出说话动作，热情表达，镜头固定，保持竖屏构图 |
-| think | 角色做出思考的手势，若有所思，手指轻点下巴，镜头固定，保持竖屏构图 |
-| listen | 角色侧耳倾听，认真聆听的表情，温和友善，镜头固定，保持竖屏构图 |
+提示词从 `prompt.md` 读取，每个状态3条变体，固定前缀为：
+`固定镜头，保持人物形象一致性，背景不变，保持竖屏构图：`
+
+每次生成将3条变体分别分配给视频1/2/3，确保每个视频动作各有差异。
 
 ### Video CLI Commands
 
+执行前先读取 `prompt.md`，将各状态变体文本赋值到以下变量：
+
 ```bash
-CHAR_IMG="output/[角色名]/image/character.png"
+# 从 prompt.md 读取各状态3条变体（固定前缀已含在完整文本中）
+IDLE_P1="[prompt.md Idle 变体1完整文本]"
+IDLE_P2="[prompt.md Idle 变体2完整文本]"
+IDLE_P3="[prompt.md Idle 变体3完整文本]"
 
-# 1. 并行提交 4 个任务
-IDLE_ID=$(pixverse create transition \
+TALK_P1="[prompt.md Talk 变体1完整文本]"
+TALK_P2="[prompt.md Talk 变体2完整文本]"
+TALK_P3="[prompt.md Talk 变体3完整文本]"
+
+THINK_P1="[prompt.md Think 变体1完整文本]"
+THINK_P2="[prompt.md Think 变体2完整文本]"
+THINK_P3="[prompt.md Think 变体3完整文本]"
+
+LISTEN_P1="[prompt.md Listen 变体1完整文本]"
+LISTEN_P2="[prompt.md Listen 变体2完整文本]"
+LISTEN_P3="[prompt.md Listen 变体3完整文本]"
+```
+
+```bash
+CHAR_IMG="output/$CHAR_NAME/image/character.png"
+
+# 1. 并行提交 12 个任务
+IDLE1_ID=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
-  --prompt "角色静止站立，放松姿态，自然表情，镜头固定，保持竖屏构图" \
+  --prompt "$IDLE_P1" \
   --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
-TALK_ID=$(pixverse create transition \
+IDLE2_ID=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
-  --prompt "角色正在说话，嘴部做出说话动作，热情表达，镜头固定，保持竖屏构图" \
+  --prompt "$IDLE_P2" \
   --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
-THINK_ID=$(pixverse create transition \
+IDLE3_ID=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
-  --prompt "角色做出思考的手势，若有所思，手指轻点下巴，镜头固定，保持竖屏构图" \
+  --prompt "$IDLE_P3" \
   --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
-LISTEN_ID=$(pixverse create transition \
+TALK1_ID=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
-  --prompt "角色侧耳倾听，认真聆听的表情，温和友善，镜头固定，保持竖屏构图" \
+  --prompt "$TALK_P1" \
   --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
 
-# 写入断点状态（4 个 ID 均已拿到，万一后续中断可直接恢复等待）
+TALK2_ID=$(pixverse create transition \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
+  --prompt "$TALK_P2" \
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
+
+TALK3_ID=$(pixverse create transition \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
+  --prompt "$TALK_P3" \
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
+
+THINK1_ID=$(pixverse create transition \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
+  --prompt "$THINK_P1" \
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
+
+THINK2_ID=$(pixverse create transition \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
+  --prompt "$THINK_P2" \
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
+
+THINK3_ID=$(pixverse create transition \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
+  --prompt "$THINK_P3" \
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
+
+LISTEN1_ID=$(pixverse create transition \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
+  --prompt "$LISTEN_P1" \
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
+
+LISTEN2_ID=$(pixverse create transition \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
+  --prompt "$LISTEN_P2" \
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
+
+LISTEN3_ID=$(pixverse create transition \
+  --images "$CHAR_IMG" "$CHAR_IMG" \
+  --prompt "$LISTEN_P3" \
+  --quality 1080p --duration 3 --no-wait --json | jq -r '.video_id')
+
+# 写入断点状态（12 个 ID 均已拿到）
 cat > .pixverse_state.json << EOF
 {
   "phase": "videos_submitted",
@@ -311,25 +394,37 @@ cat > .pixverse_state.json << EOF
   "green_screen": $GREEN_SCREEN,
   "image_path": "output/$CHAR_NAME/image/character.png",
   "video_ids": {
-    "idle":   "$IDLE_ID",
-    "talk":   "$TALK_ID",
-    "think":  "$THINK_ID",
-    "listen": "$LISTEN_ID"
+    "idle1": "$IDLE1_ID", "idle2": "$IDLE2_ID", "idle3": "$IDLE3_ID",
+    "talk1": "$TALK1_ID", "talk2": "$TALK2_ID", "talk3": "$TALK3_ID",
+    "think1": "$THINK1_ID", "think2": "$THINK2_ID", "think3": "$THINK3_ID",
+    "listen1": "$LISTEN1_ID", "listen2": "$LISTEN2_ID", "listen3": "$LISTEN3_ID"
   }
 }
 EOF
 
 # 2. 统一等待
-for ID in $IDLE_ID $TALK_ID $THINK_ID $LISTEN_ID; do
+for ID in $IDLE1_ID $IDLE2_ID $IDLE3_ID \
+          $TALK1_ID $TALK2_ID $TALK3_ID \
+          $THINK1_ID $THINK2_ID $THINK3_ID \
+          $LISTEN1_ID $LISTEN2_ID $LISTEN3_ID; do
   pixverse task wait $ID --json
 done
 
-# 3. 下载
-mkdir -p "output/[角色名]/videos"
-pixverse asset download $IDLE_ID   --dest "output/[角色名]/videos" --json
-pixverse asset download $TALK_ID   --dest "output/[角色名]/videos" --json
-pixverse asset download $THINK_ID  --dest "output/[角色名]/videos" --json
-pixverse asset download $LISTEN_ID --dest "output/[角色名]/videos" --json
+# 3. 下载并重命名（逐一下载后立即重命名，避免文件名冲突）
+mkdir -p "output/$CHAR_NAME/videos"
+
+for PAIR in \
+  "$IDLE1_ID:idle1"     "$IDLE2_ID:idle2"     "$IDLE3_ID:idle3" \
+  "$TALK1_ID:talk1"     "$TALK2_ID:talk2"     "$TALK3_ID:talk3" \
+  "$THINK1_ID:think1"   "$THINK2_ID:think2"   "$THINK3_ID:think3" \
+  "$LISTEN1_ID:listen1" "$LISTEN2_ID:listen2" "$LISTEN3_ID:listen3"; do
+  VID_ID="${PAIR%%:*}"
+  VID_NAME="${PAIR##*:}"
+  TMP=$(mktemp -d)
+  pixverse asset download "$VID_ID" --dest "$TMP" --json
+  mv "$TMP"/*.mp4 "output/$CHAR_NAME/videos/${VID_NAME}.mp4"
+  rm -rf "$TMP"
+done
 
 # 写入断点状态（视频全部下载完成）
 cat > .pixverse_state.json << EOF
@@ -339,10 +434,10 @@ cat > .pixverse_state.json << EOF
   "green_screen": $GREEN_SCREEN,
   "image_path": "output/$CHAR_NAME/image/character.png",
   "video_ids": {
-    "idle":   "$IDLE_ID",
-    "talk":   "$TALK_ID",
-    "think":  "$THINK_ID",
-    "listen": "$LISTEN_ID"
+    "idle1": "$IDLE1_ID", "idle2": "$IDLE2_ID", "idle3": "$IDLE3_ID",
+    "talk1": "$TALK1_ID", "talk2": "$TALK2_ID", "talk3": "$TALK3_ID",
+    "think1": "$THINK1_ID", "think2": "$THINK2_ID", "think3": "$THINK3_ID",
+    "listen1": "$LISTEN1_ID", "listen2": "$LISTEN2_ID", "listen3": "$LISTEN3_ID"
   }
 }
 EOF
@@ -356,23 +451,29 @@ EOF
 📁 output/[角色名]/
    ├── image/   └── character.png
    └── videos/
-       ├── idle.mp4 / talk.mp4 / think.mp4 / listen.mp4
+       ├── idle1.mp4 / idle2.mp4 / idle3.mp4
+       ├── talk1.mp4 / talk2.mp4 / talk3.mp4
+       ├── think1.mp4 / think2.mp4 / think3.mp4
+       └── listen1.mp4 / listen2.mp4 / listen3.mp4
 
-请查看 4 个视频，有不满意的可以告诉我重新生成（每个状态最多重生 1 次）。
+请查看 12 个视频，有不满意的可以告诉我重新生成（每个视频最多重生 1 次）。
 ```
 
 ### Single Video Regeneration
 
 ```
 ├── 用户满意全部 → 进入【透明背景处理】
-└── 用户指定某个状态重生
-      └── 检查该状态重生次数（上限 1）
-            ├── 未达上限 → 携带反馈修改提示词 → 重新生成 → 下载替换
+└── 用户指定某个视频重生（如 "idle2 不满意"）
+      └── 检查该视频重生次数（上限 1）
+            ├── 未达上限 → 携带反馈修改提示词 → 重新生成 → 下载重命名覆盖
             └── 已达上限 → 提示无法继续重生，保留当前版本
 ```
 
 重生命令（不加 `--no-wait`）：
 ```bash
+# 重新声明变量（bash 状态不跨 tool call 持久化）
+CHAR_IMG="output/$CHAR_NAME/image/character.png"
+
 NEW_RESULT=$(pixverse create transition \
   --images "$CHAR_IMG" "$CHAR_IMG" \
   --prompt "[根据用户反馈调整后的提示词]" \
@@ -380,7 +481,10 @@ NEW_RESULT=$(pixverse create transition \
   --json)
 NEW_VIDEO_ID=$(echo "$NEW_RESULT" | jq -r '.video_id')
 
-pixverse asset download $NEW_VIDEO_ID --dest "output/[角色名]/videos" --json
+TMP=$(mktemp -d)
+pixverse asset download "$NEW_VIDEO_ID" --dest "$TMP" --json
+mv "$TMP"/*.mp4 "output/$CHAR_NAME/videos/[状态名][编号].mp4"
+rm -rf "$TMP"
 ```
 
 ---
@@ -403,31 +507,31 @@ pixverse asset download $NEW_VIDEO_ID --dest "output/[角色名]/videos" --json
 **处理说明**：
 - 抠绿幕：`colorkey` 对绿色背景进行去除
 - Despill：`colorchannelmixer` 修正边缘绿色溢色
-- 输出位置：原文件夹内，文件名加 `_alpha` 后缀
+- 输出位置：新建 `[image无背景版]/` 和 `[videos无背景版]/` 文件夹
 - 图片输出 PNG（rgba），视频输出 WebM VP9（yuva420p）
 
 ```bash
-# 处理 image/ 下所有图片
-for IMG in output/[角色名]/image/*.{png,jpg,jpeg}; do
-  [ -f "$IMG" ] || continue
-  FILENAME=$(basename "${IMG%.*}")
-  ffmpeg -i "$IMG" \
-    -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
-         colorchannelmixer=rg=-0.15:bg=-0.15" \
-    -pix_fmt rgba \
-    "output/[角色名]/image/${FILENAME}_alpha.png"
-done
+# 创建无背景版文件夹
+mkdir -p "output/$CHAR_NAME/image无背景版"
+mkdir -p "output/$CHAR_NAME/videos无背景版"
 
-# 处理 videos/ 下所有视频
-for VID in output/[角色名]/videos/*.mp4; do
-  [ -f "$VID" ] || continue
-  FILENAME=$(basename "${VID%.*}")
-  ffmpeg -i "$VID" \
-    -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
-         colorchannelmixer=rg=-0.15:bg=-0.15" \
-    -c:v libvpx-vp9 \
-    -pix_fmt yuva420p \
-    "output/[角色名]/videos/${FILENAME}_alpha.webm"
+# 处理参考图
+ffmpeg -i "output/$CHAR_NAME/image/character.png" \
+  -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
+       colorchannelmixer=rg=-0.15:bg=-0.15" \
+  -pix_fmt rgba \
+  "output/$CHAR_NAME/image无背景版/character无背景版.png"
+
+# 处理 12 个视频
+for STATE in idle talk think listen; do
+  for N in 1 2 3; do
+    ffmpeg -i "output/$CHAR_NAME/videos/${STATE}${N}.mp4" \
+      -vf "colorkey=color=0x00FF00:similarity=0.30:blend=0.08,\
+           colorchannelmixer=rg=-0.15:bg=-0.15" \
+      -c:v libvpx-vp9 \
+      -pix_fmt yuva420p \
+      "output/$CHAR_NAME/videos无背景版/${STATE}无背景版${N}.webm"
+  done
 done
 ```
 
@@ -451,17 +555,19 @@ done
 output/
 └── [角色名]/
      ├── image/
-     │   ├── character.png           # 原始参考图
-     │   └── character_alpha.png     # 透明背景版（可选）
-     └── videos/
-         ├── idle.mp4
-         ├── talk.mp4
-         ├── think.mp4
-         ├── listen.mp4
-         ├── idle_alpha.webm         # 透明背景版（可选）
-         ├── talk_alpha.webm
-         ├── think_alpha.webm
-         └── listen_alpha.webm
+     │   └── character.png                 # 原始参考图
+     ├── image无背景版/                     # 透明背景版（可选）
+     │   └── character无背景版.png
+     ├── videos/
+     │   ├── idle1.mp4 / idle2.mp4 / idle3.mp4
+     │   ├── talk1.mp4 / talk2.mp4 / talk3.mp4
+     │   ├── think1.mp4 / think2.mp4 / think3.mp4
+     │   └── listen1.mp4 / listen2.mp4 / listen3.mp4
+     └── videos无背景版/                   # 透明背景版（可选）
+         ├── idle无背景版1.webm / idle无背景版2.webm / idle无背景版3.webm
+         ├── talk无背景版1.webm / talk无背景版2.webm / talk无背景版3.webm
+         ├── think无背景版1.webm / think无背景版2.webm / think无背景版3.webm
+         └── listen无背景版1.webm / listen无背景版2.webm / listen无背景版3.webm
 ```
 
 ---
